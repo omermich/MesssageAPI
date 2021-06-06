@@ -1,261 +1,186 @@
 const express = require("express");
+const Joi = require("joi").extend(require("@joi/date"));
 const app = express();
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
-var cur_id = 4;
-var users = [
-  {
-    name: "omer",
-    inbox: [
-      {
-        sender: "eyal",
-        recipient: "omer",
-        title: "Hello",
-        content: "Hey there!",
-        date: "01-01-2020",
-        id: 1,
-        read: true,
-      },
-      {
-        sender: "eyal",
-        recipient: "omer",
-        title: "",
-        content: "",
-        date: "02-01-2020",
-        id: 2,
-        read: false,
-      },
-    ],
-    sent: [
-      {
-        sender: "omer",
-        recipient: "eyal",
-        title: "Hello",
-        content: "Welome!",
-        date: "02-01-2020",
-        id: 3,
-        read: true,
-      },
-    ],
-  },
-  {
-    name: "eyal",
-    inbox: [
-      {
-        sender: "omer",
-        recipient: "eyal",
-        title: "Hello",
-        content: "Welome!",
-        date: "02-01-2020",
-        id: 3,
-        read: true,
-      },
-    ],
-    sent: [
-      {
-        sender: "eyal",
-        recipient: "omer",
-        title: "Hello",
-        content: "Hey there!",
-        date: "01-01-2020",
-        id: 1,
-        read: true,
-      },
-      {
-        sender: "eyal",
-        recipient: "omer",
-        title: "",
-        content: "",
-        date: "02-01-2020",
-        id: 2,
-        read: false,
-      },
-    ],
-  },
-];
+var cur_id = 1; // MessageID that will increment with each new message.
+var users = []; // "DB" to hold the users and their incoming / sent messages.
 
 // Read message (get by msgID).
-app.get("/api/:user/msg-id/:id", (req, res) => {
-  userObj = getUserObject(req.params.user);
-  if (userObj === undefined) {
-    res.status(404).send("User cannot be found.");
-    return;
-  }
+app.get("/api/:user/msg/:id", (req, res) => {
+    userObj = getUserObject(req.params.user);
+    if (userObj === undefined)
+        return res.status(404).send("User cannot be found.");
 
-  msgObj = getMsgObject(userObj.inbox, Number(req.params.id));
+    msgObj = getMsgObject(userObj.inbox, Number(req.params.id));
 
-  if (msgObj === undefined) {
-    res.status(404).send("Message cannot be found.");
-    return;
-  }
+    if (msgObj === undefined)
+        return res.status(404).send("Message cannot be found.");
 
-  // Set read to true.
-  msgObj.read = true;
+    // Set read to true.
+    msgObj.read = true;
 
-  // Return message.
-  res.send(msgObj);
+    // Return message.
+    res.send(msgObj);
 });
 
 // Get messages (get by user).
 app.get("/api/:user/inbox/all", (req, res) => {
-  userObj = getUserObject(req.params.user);
-  if (userObj === undefined || !userObj.inbox.length) {
-    res.send("The user's inbox is empty.");
-    return;
-  }
+    userObj = getUserObject(req.params.user);
+    if (userObj === undefined || !userObj.inbox.length)
+        return res.send("The user's inbox is empty.");
 
-  res.send(userObj.inbox);
+    res.send(userObj.inbox);
 });
 
 // Get unread messages (get by user).
 app.get("/api/:user/inbox/unread", (req, res) => {
-  userObj = getUserObject(req.params.user);
-  if (userObj === undefined || !userObj.inbox.length) {
-    res.send("No Unread Messages.");
-    return;
-  }
+    userObj = getUserObject(req.params.user);
+    if (userObj === undefined || !userObj.inbox.length)
+        return res.send("No Unread Messages.");
 
-  unreadMsgs = userObj.inbox.filter((x) => !x.read);
-  !unreadMsgs.length ? res.send("No Unread Messages.") : res.send(unreadMsgs);
+    unreadMsgs = userObj.inbox.filter((x) => !x.read);
+    !unreadMsgs.length ? res.send("No Unread Messages.") : res.send(unreadMsgs);
 });
 
 // Send message.
 app.post("/api", (req, res) => {
-  // check if request body contains all required keys.
-  if (!validateMsg(req.body)) {
+    // check if request body contains all required keys.
     // if not, return 'bad request'.
-    res.status(400).send("Missing paramters within message object.");
-    return;
-  }
+    error = validate(req.body);
+    if (error) return res.status(400).send(error.details[0].message);
 
-  // get message object from request body.
-  const { title, content, sender, recipient, ...msg } = req.body;
-  if (title === undefined) title = "";
-  if (content === undefined) content = "";
-  msg.sender = sender;
-  msg.recipient = recipient;
-  msg.title = title;
-  msg.content = content;
-  msg.id = cur_id;
-  msg.read = false;
-  cur_id++;
+    // get message object from request body.
+    const { title, content, sender, recipient, ...msg } = req.body;
+    if (title == undefined) title = "";
+    if (content == undefined) content = "";
+    msg.sender = sender;
+    msg.recipient = recipient;
+    msg.title = title;
+    msg.content = content;
+    msg.id = cur_id;
+    msg.read = false;
+    cur_id++;
 
-  // find index of users within users object.
-  senIndex = getUserIndex(sender);
-  recIndex = getUserIndex(recipient);
-
-  if (senIndex == -1) {
-    // recipient username not found, create new user.
-    users.push({
-      name: sender,
-      inbox: [],
-      sent: [],
-    });
+    // find index of users within users object.
     senIndex = getUserIndex(sender);
-  }
-  if (recIndex == -1) {
-    // recipient username not found, create new user.
-    users.push({
-      name: recipient,
-      inbox: [],
-      sent: [],
-    });
     recIndex = getUserIndex(recipient);
-  }
 
-  // add message to receipient inbox and sender sent box.
-  users[recIndex].inbox.push(msg);
-  users[senIndex].sent.push(msg);
+    if (senIndex == -1) {
+        // recipient username not found, create new user.
+        users.push({
+            name: sender,
+            inbox: [],
+            sent: [],
+        });
+        senIndex = getUserIndex(sender);
+    }
+    if (recIndex == -1) {
+        // recipient username not found, create new user.
+        users.push({
+            name: recipient,
+            inbox: [],
+            sent: [],
+        });
+        recIndex = getUserIndex(recipient);
+    }
 
-  // TEST
-  res.send("Message sent successfully!");
+    // add message to receipient inbox and sender sent box.
+    users[recIndex].inbox.push(msg);
+    users[senIndex].sent.push(msg);
+
+    res.send("Message sent successfully!");
 });
 
 // Delete message (by user and msgID).
 app.delete("/api/:user/:id", (req, res) => {
-  // Checks if user is the sender or recipient.
-  userIndex = getUserIndex(req.params.user);
-  if (userIndex === -1) {
-    res.status(404).send("User cannot be found.");
-    return;
-  }
-  userObj = users[userIndex];
-  var userIsSender = true;
+    // Checks if user is the sender or recipient.
+    userIndex = getUserIndex(req.params.user);
+    if (userIndex == -1) return res.status(404).send("User cannot be found.");
 
-  id = Number(req.params.id);
-  msgIndex = getMsgIndex(userObj.sent, id);
-  if (msgIndex === -1) {
-    userIsSender = false;
-    msgIndex = getMsgIndex(userObj.inbox, id);
-    if (msgIndex === -1) {
-      res.status(404).send("Message cannot be found.");
-      return;
+    userObj = users[userIndex];
+    var userIsSender = true;
+
+    id = Number(req.params.id);
+    msgIndex = getMsgIndex(userObj.sent, id);
+    if (msgIndex == -1) {
+        userIsSender = false;
+        msgIndex = getMsgIndex(userObj.inbox, id);
+        if (msgIndex == -1)
+            return res.status(404).send("Message cannot be found.");
     }
-  }
 
-  if (userIsSender) {
-    // In case the given user is the sender:
-    msg = getMsgObject(userObj.sent, id);
-    recName = msg.recipient;
+    excludeID = (x) => {
+        return x.id != id;
+    };
 
-    // Delete from sender sent box.
-    userObj.sent = userObj.sent.filter((x) => {
-      return x.id !== id;
-    });
+    if (userIsSender) {
+        // In case the given user is the sender:
+        msg = getMsgObject(userObj.sent, id);
+        recName = msg.recipient;
 
-    recIndex = getUserIndex(recName);
-    recObj = users[recIndex];
+        // Delete from sender sent box.
+        userObj.sent = userObj.sent.filter(excludeID);
 
-    // Delete from recipient inbox.
-    recObj.inbox = recObj.inbox.filter((x) => {
-      return x.id !== id;
-    });
-  } else {
-    // In case the given user is the recipient:
-    msg = getMsgObject(userObj.inbox, id);
-    senName = msg.sender;
+        recIndex = getUserIndex(recName);
+        recObj = users[recIndex];
 
-    // Delete from sender inbox.
-    userObj.inbox = userObj.inbox.filter((x) => {
-      return x.id !== id;
-    });
+        // Delete from recipient inbox.
+        recObj.inbox = recObj.inbox.filter(excludeID);
+    } else {
+        // In case the given user is the recipient:
+        msg = getMsgObject(userObj.inbox, id);
+        senName = msg.sender;
 
-    senIndex = getUserIndex(senName);
-    senObj = users[senIndex];
+        // Delete from sender inbox.
+        userObj.inbox = userObj.inbox.filter(excludeID);
 
-    // Delete from recipient inbox.
-    senObj.sent = senObj.sent.filter((x) => {
-      return x.id !== id;
-    });
-  }
+        senIndex = getUserIndex(senName);
+        senObj = users[senIndex];
 
-  res.send('Message sent succefully!');
+        // Delete from recipient inbox.
+        senObj.sent = senObj.sent.filter(excludeID);
+    }
+
+    res.send("Message deleted successfully!");
 });
 
-function validateMsg(obj) {
-  const messageKeys = ["sender", "recipient", "title", "content", "date"];
-  return messageKeys.every((item) => obj.hasOwnProperty(item));
+// Validate Message object from post request according to schema.
+function validate(obj) {
+    const schema = Joi.object({
+        sender: Joi.string().required().min(2),
+        recipient: Joi.string().required().min(2),
+        title: Joi.string().required(),
+        content: Joi.string().required(),
+        date: Joi.date().format("DD-MM-YYYY").required(),
+    });
+    const { error } = schema.validate(obj);
+    return error;
 }
 
+// Get index of user from 'users' given their name.
 function getUserIndex(name) {
-  return users.findIndex((x) => x.name === name);
+    return users.findIndex((x) => x.name === name);
 }
 
+// Get user object from 'users' given their name.
 function getUserObject(name) {
-  return users.find((x) => x.name === name);
+    return users.find((x) => x.name === name);
 }
 
+// Get index of message from given mail box, given its ID.
 function getMsgIndex(box, id) {
-  return box.findIndex((x) => x.id === id);
+    return box.findIndex((x) => x.id === id);
 }
 
+// Get message object from given mail box, given its ID.
 function getMsgObject(box, id) {
-  return box.find((x) => x.id === id);
+    return box.find((x) => x.id === id);
 }
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
-  console.log(`Listening on port ${port}...`);
+    console.log(`Listening on port ${port}...`);
 });
